@@ -46,10 +46,9 @@ import java.io.StringReader;
 import java.io.StringWriter;
 import java.io.UnsupportedEncodingException;
 import java.security.cert.CertificateException;
+import java.security.cert.X509CRL;
 import java.security.cert.X509Certificate;
 import java.util.*;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -131,7 +130,12 @@ public class SamlClient {
     this.assertionConsumerServiceUrl = assertionConsumerServiceUrl;
     this.identityProviderUrl = identityProviderUrl;
     this.responseIssuer = responseIssuer;
-    credentials = certificates.stream().map(SamlClient::getCredential).collect(Collectors.toList());
+
+    this.credentials = new ArrayList<>();
+    for (X509Certificate cert : certificates) {
+      this.credentials.add(SamlClient.getCredential(cert));
+    }
+
     this.samlBinding = samlBinding;
   }
 
@@ -487,18 +491,16 @@ public class SamlClient {
     }
 
     // It's fine if any of the credentials match the signature
-    return credentials
-        .stream()
-        .anyMatch(
-            c -> {
-              try {
-                SignatureValidator signatureValidator = new SignatureValidator(c);
-                signatureValidator.validate(signature);
-                return true;
-              } catch (ValidationException ex) {
-                return false;
-              }
-            });
+    for(Credential credential : credentials) {
+      try {
+        SignatureValidator signatureValidator = new SignatureValidator(credential);
+        signatureValidator.validate(signature);
+        return true;
+      } catch (ValidationException ex) {
+      }
+    }
+
+    return false;
   }
 
   private synchronized static void ensureOpenSamlIsInitialized() throws SamlException {
@@ -572,31 +574,34 @@ public class SamlClient {
 
   private static SingleSignOnService getIdpBinding(
       IDPSSODescriptor idpSsoDescriptor, SamlIdpBinding samlBinding) throws SamlException {
-    return idpSsoDescriptor
-        .getSingleSignOnServices()
-        .stream()
-        .filter(
-            x
-                -> x.getBinding()
-                    .equals("urn:oasis:names:tc:SAML:2.0:bindings:HTTP-" + samlBinding.toString()))
-        .findAny()
-        .orElseThrow(() -> new SamlException("Cannot find HTTP-POST SSO binding in metadata"));
+
+    List<SingleSignOnService> singleSignOnServices = idpSsoDescriptor.getSingleSignOnServices();
+
+    for(SingleSignOnService service : singleSignOnServices) {
+      if (service.getBinding().equals("urn:oasis:names:tc:SAML:2.0:bindings:HTTP-" + samlBinding.toString())) {
+        return service;
+      }
+    }
+
+    throw new SamlException("Cannot find HTTP-POST SSO binding in metadata");
   }
 
   private static List<X509Certificate> getCertificates(IDPSSODescriptor idpSsoDescriptor)
       throws SamlException {
 
-    List<X509Certificate> certificates;
+    List<X509Certificate> certificates = new ArrayList<>();
 
     try {
-      certificates =
-          idpSsoDescriptor
-              .getKeyDescriptors()
-              .stream()
-              .filter(x -> x.getUse() == UsageType.SIGNING)
-              .flatMap(SamlClient::getDatasWithCertificates)
-              .map(SamlClient::getFirstCertificate)
-              .collect(Collectors.toList());
+
+      List<KeyDescriptor> keyDescriptors = idpSsoDescriptor.getKeyDescriptors();
+
+      for(KeyDescriptor keyDescriptor : keyDescriptors) {
+        if (keyDescriptor.getUse() == UsageType.SIGNING) {
+          for(X509Data data : SamlClient.getDatasWithCertificates(keyDescriptor)) {
+            certificates.add(SamlClient.getFirstCertificate(data));
+          }
+        }
+      }
 
     } catch (Exception e) {
       throw new SamlException("Exception in getCertificates", e);
@@ -605,18 +610,32 @@ public class SamlClient {
     return certificates;
   }
 
-  private static Stream<X509Data> getDatasWithCertificates(KeyDescriptor descriptor) {
-    return descriptor
-        .getKeyInfo()
-        .getX509Datas()
-        .stream()
-        .filter(d -> d.getX509Certificates().size() > 0);
+  private static List<X509Data> getDatasWithCertificates(KeyDescriptor descriptor) {
+
+    List<X509Data> x509Datas = descriptor
+            .getKeyInfo()
+            .getX509Datas();
+
+    List<X509Data> withCertificates = new ArrayList<>();
+
+    for(X509Data data : x509Datas) {
+      if (data.getX509Certificates().size() > 0) {
+        withCertificates.add(data);
+      }
+    }
+
+    return withCertificates;
   }
 
   private static X509Certificate getFirstCertificate(X509Data data) {
     try {
-      org.opensaml.xml.signature.X509Certificate cert =
-          data.getX509Certificates().stream().findFirst().orElse(null);
+      List<org.opensaml.xml.signature.X509Certificate> certs = data.getX509Certificates();
+
+      if (certs.size() == 0) {
+        return null;
+      }
+
+      org.opensaml.xml.signature.X509Certificate cert = certs.get(0);
       if (cert != null) {
         return KeyInfoHelper.getCertificate(cert);
       }
@@ -631,7 +650,7 @@ public class SamlClient {
     BasicX509Credential credential = new BasicX509Credential();
     credential.setEntityCertificate(certificate);
     credential.setPublicKey(certificate.getPublicKey());
-    credential.setCRLs(Collections.emptyList());
+    credential.setCRLs(new ArrayList<X509CRL>());
     return credential;
   }
 
