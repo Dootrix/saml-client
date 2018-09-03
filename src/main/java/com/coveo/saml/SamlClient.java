@@ -332,7 +332,7 @@ public class SamlClient {
     }
   }
 
-  private X509Credential getSpCredential() throws SamlException {
+  private X509Credential getSpCredential() {
     try {
       PrivateKey privKey = this.loadPrivateKey("signing-private.der");
       X509Certificate cert = this.loadCertificate("signing-public.pem");
@@ -394,12 +394,9 @@ public class SamlClient {
    *
    * @return The base-64 encoded SAML request.
    * @throws SamlException        thrown if an unexpected error occurs.
-   * @throws SAMLException
-   * @throws SignatureException
-   * @throws MarshallingException
    */
   public RequestValues getSamlLogoutRequest(String nameId)
-      throws SamlException, MarshallingException, SignatureException, SAMLException {
+      throws SamlException {
     LogoutRequest request = (LogoutRequest) buildSamlObject(LogoutRequest.DEFAULT_ELEMENT_NAME);
     request.setID("z" + UUID.randomUUID().toString()); // ADFS needs IDs to start with a letter
 
