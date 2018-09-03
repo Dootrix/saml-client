@@ -102,7 +102,7 @@ public class SamlClient {
   private List<Credential> credentials;
   private DateTime now; // used for testing only
   private SamlIdpBinding samlBinding;
-  private List<SessionIndex> currentSessionIndex;
+  private List<SessionIndex> currentSessionIndex = new ArrayList<SessionIndex>();;
 
   /**
    * Returns the url where SAML requests should be posted.
